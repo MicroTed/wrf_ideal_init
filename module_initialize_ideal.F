@@ -279,14 +279,28 @@ CONTAINS
    pi = 2.*asin(1.0)
    write(6,*) ' pi is ',pi
    IF ( nxc <= 0 .and. nxb(1) <= 0) THEN
+
+      IF ( nxc == -2 ) THEN ! put bubble in center of patch
+      nxc = (ime+ims)/2
+      write(6,*) 'nxc = ',nxc
+      nxb(1) = nxc
+      ELSE
       nxc = (ide-ids)/3 + 1
       nxb(1) = nxc
+      ENDIF
+      
    ELSEIF  ( nxc > 0 .and. nxb(1) <= 0) THEN
      nxb(1) = nxc
    ENDIF
    IF ( nyc <= 0 .and. nyb(1) <= 0 ) THEN
+      IF ( nyc == -2 ) THEN ! put bubble in center of patch
+      nyc = (jme+jms)/2
+      write(6,*) 'nyc = ',nyc
+      nyb(1) = nyc
+      ELSE
       nyc = (jde-jds)/2 + 1
       nyb(1) = nyc
+      ENDIF
    ELSEIF ( nyc > 0 .and. nyb(1) <= 0 ) THEN
       nyb(1) = nyc
    ENDIF
