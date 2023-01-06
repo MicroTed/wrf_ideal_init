@@ -327,8 +327,8 @@ CONTAINS
    nyc = jde/2
    icm = ide/2
 ! lm is the half width of the land in terms of grid points
-   IF ( lm == 0 ) lm = 25
-   write(6,*) 'lm,icm-lm,icm+lm = ', lm,icm-lm,icm+lm
+   !IF ( lm == 0 ) lm = 25
+   !write(6,*) 'lm,icm-lm,icm+lm = ', lm,icm-lm,icm+lm
 
   CASE (b_wave)
 
@@ -1234,7 +1234,7 @@ CONTAINS
                ( 1. + COS ( 2*pi/(ye-ys) * ( j-ys ) + pi ) )
   ENDDO
   ENDDO
- endif
+  ENDIF
  
   IF ( ido_terrain == 2 ) THEN !  EW_RIDGE
   DO j=max(ys,jds),min(ye,jde-1)
@@ -2001,7 +2001,8 @@ CONTAINS
   CASE(convrad)
   DO J = jts, min(jde-1,jte)
   DO I = its, min(ide-1,ite)
-         grid%tsk(i,j) = theta_surf * (p_surf/p1000mb)**rcp
+!         grid%tsk(i,j) = theta_surf * (p_surf/p1000mb)**rcp
+         grid%tsk(i,j) = sst_input * (p_surf/p1000mb)**rcp
          grid%tmn(i,j) = grid%tsk(i,j)
   ENDDO
   ENDDO
