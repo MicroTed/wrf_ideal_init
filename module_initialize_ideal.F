@@ -264,6 +264,7 @@ MODULE module_initialize_ideal
     dthrantotvn = 0.0d0
     dthrantotvp = 0.0d0
    IF ( bubbletype > 1 ) THEN
+   !  write(0,*) 'allocate ranarray: ids:ide,jds:jde = ',ids,ide,jds,jde
      allocate ( ranarray(ids:ide,jds:jde) )
      allocate ( ranarraysmth(ids:ide,jds:jde) )
 
@@ -278,8 +279,8 @@ MODULE module_initialize_ideal
      ENDDO
     ENDDO
 
-    DO j = jds,jde,4
-     DO i = ids,ide,4
+    DO j = jds,jde-4,4
+     DO i = ids,ide-4,4
        DO  j1 = 0,4
        DO  i1 = 0,4
          ranarraysmth(i+i1,j+j1) = ranarray(i,j)
@@ -1525,6 +1526,8 @@ MODULE module_initialize_ideal
 
     ENDDO
   ENDDO
+
+   IF ( allocated( ranarray ) ) deallocate( ranarray, ranarraysmth )
 
 ! ub>>
 ! Use the hypsometric equation to calculate altitudes (m) at the chosen
