@@ -29,12 +29,14 @@ MODULE module_initialize_ideal
    USE module_dm
 #endif
 
+  private rndnum
+
   real, private :: ugrid = 0.0        ! east-west grid motion (subtracted from U wind component)
   real, private :: vgrid = 0.0        ! north-south grid motion (subtracted from V wind component)
   logical :: use_snd_plevels = .false. ! whether to read in pressure from the sounding file and use the same levels
   logical :: use_snd_zlevels = .false. ! whether to use Z levels the sounding file and create pressure
 
-CONTAINS
+ CONTAINS
 
 
 !-------------------------------------------------------------------
@@ -189,10 +191,19 @@ CONTAINS
    real :: sst_input = 300.
    LOGICAL :: real_soil = .false.
 
+   integer            :: ibbleseed = -1
+   integer :: bubbletype = 1 ! =2 to add random perts
+   real, allocatable :: ranarray(:,:),ranarraysmth(:,:)
+!   real :: rndnum
+  integer           :: iranseed, i1, j1
+  double precision  :: dthtot, dthrantot, dthrantotv, dthran
+  double precision  :: dthrantotn, dthrantotp
+  double precision  :: dthrantotvn, dthrantotvp
+
    NAMELIST /init_ideal/ nxc,nyc,delt,use_eta_levels, &
         ugrid,vgrid,setccn,use_snd_plevels,use_snd_zlevels,numbub,nxb,nyb, &
         xradbub,yradbub,zradbub,moisten,mtn_ht,ido_terrain,centlat, centlon, lm, &
-        lu_input, vegfra, canwat, isltyp, sst_input, &
+        lu_input, vegfra, canwat, isltyp, sst_input, bubbletype, ibbleseed, &
         real_soil
 
    SELECT CASE ( model_data_order )
@@ -242,6 +253,43 @@ CONTAINS
 
    CALL model_to_grid_config_rec ( grid%id , model_config_rec , config_flags )
 
+!-----------------------------------------------------------------------------
+! TEMPERATURE perturbations
+
+    dthtot      = 0.0d0
+    dthrantot   = 0.0d0
+    dthrantotv  = 0.0d0
+    dthrantotn  = 0.0d0
+    dthrantotp  = 0.0d0
+    dthrantotvn = 0.0d0
+    dthrantotvp = 0.0d0
+   IF ( bubbletype > 1 ) THEN
+     allocate ( ranarray(ids:ide,jds:jde) )
+     allocate ( ranarraysmth(ids:ide,jds:jde) )
+
+    iranseed = -Abs(ibbleseed)
+!    dfac = 0.0
+    ranarray(:,:) = 0.0
+    ranarraysmth(:,:) = 0.0
+
+    DO j = jds,jde
+     DO i = ids,ide
+       ranarray(i,j) = 2.0*(rndnum(iranseed) - 0.5)  ! values of -1 to 1
+     ENDDO
+    ENDDO
+
+    DO j = jds,jde,4
+     DO i = ids,ide,4
+       DO  j1 = 0,4
+       DO  i1 = 0,4
+         ranarraysmth(i+i1,j+j1) = ranarray(i,j)
+       ENDDO
+       ENDDO
+     ENDDO
+    ENDDO
+     
+   ENDIF
+   
   ideal_constants: SELECT CASE ( model_config_rec%ideal_case )
   CASE ( hill2d_x )
    hm = 100.
@@ -1420,6 +1468,9 @@ CONTAINS
 !  the mass in the column is not changing, so when theta changes,
 !  we recompute density and geopotential
 
+               dthran = 0.0d0
+           IF( bubbletype .eq. 2 ) dthran = dthran + 0.1*ranarray(i,j)
+
         DO n = 1,numbub
          yrad = config_flags%dy*float(j-nyb(n))/yradbub
          xrad = config_flags%dx*float(i-nxb(n))/xradbub
@@ -1430,7 +1481,7 @@ CONTAINS
         RAD=SQRT(xrad*xrad+yrad*yrad+zrad*zrad)
         IF(RAD <= 1.) THEN
            thtmp   = grid%t_1(i,k,j) + t0
-           grid%t_1(i,k,j)=grid%t_1(i,k,j)+delt*COS(.5*PI*RAD)**2
+           grid%t_1(i,k,j)=grid%t_1(i,k,j)+delt*COS(.5*PI*RAD)**2 + dthran
            grid%t_2(i,k,j)=grid%t_1(i,k,j)
            qvf = 1. + rvovrd*moist(i,k,j,P_QV)
            grid%alt(i,k,j) = (r_d/p1000mb)*(grid%t_1(i,k,j)+t0)*qvf* &
@@ -1451,7 +1502,7 @@ CONTAINS
             
             qvs1  =  380.*exp(17.27*(tem-273.16) / (tem - 36.)) / ptmp
             
-            write(0,*) 'i,j,k,pres,thtmp,tem,qvs,rh,qvs1 = ',i,j,k,pres,thtmp,tem,qvs,rh,qvs1
+          !  write(0,*) 'i,j,k,pres,thtmp,tem,qvs,rh,qvs1 = ',i,j,k,pres,thtmp,tem,qvs,rh,qvs1
             
             moist(i,k,j,P_QV) = rh*qvs1
 !            qv3(i,j,k) = rh*qvs1
@@ -2732,6 +2783,104 @@ CONTAINS
       close(unit=11,status = 'keep')
 
       end subroutine read_soil
+
+! #####################################################################
+!
+!
+! #####################################################################
+!
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!
+!  STRAKAS ATMOSPHERIC MODEL  (SAM)
+!    Designed by Jerry M. Straka
+!
+!  RNDNUM(ISEED) (must define iseed=-1 on intialization 
+!                 in user routine)
+!
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!2345678901234567890123456789012345678901234567890123456789012345678912
+!
+!  start function for random numbers....
+!
+      real function rndnum(iseed)
+!
+      implicit none
+!
+!      real rndnum
+!
+      integer :: iseed
+      real    ambig
+      parameter (ambig=4000000)
+      real    amseed
+      parameter (amseed=1618033)
+      real    amz,amj,amk
+      parameter (amz=0)
+!
+      real, save ::    ama(55)
+!
+      real       fac
+      parameter (fac=1./ambig)
+!
+      integer, save :: iff = 0, inext, inextp
+      integer :: n, nn, m
+!      save iff, inext, inextp, ama
+!
+!      data iff /0/
+!
+      if ( iseed .lt. 0 .or. iff .eq. 0 ) then
+      iff = 1
+      amj = amseed - abs(iseed)
+      amj = mod(amj,ambig)
+      ama(55) = amj
+      amk = 1
+      do n = 1,54
+      nn = mod(21*n,55)
+      ama(nn) = amk
+      amk = amj-amk
+      if (amk.lt.amz) amk=amk+ambig
+      amj=ama(nn)
+      end do
+!
+      do m = 1,4
+      do n = 1,55
+      ama(n)=ama(n)-ama(1+mod(n+30,55))
+      if (ama(n).lt.amz) ama(n)=ama(n)+ambig
+      end do
+      end do
+!
+      inext = 0
+      inextp = 31
+      iseed = 1
+!
+      end if
+!
+! find random number
+!
+      inext=inext+1
+      if (inext.eq.56) inext=1
+      inextp=inextp+1
+      if (inextp.eq.56) inextp=1
+      amj=ama(inext)-ama(inextp)
+      if (amj.lt.amz) amj=amj+ambig
+      ama(inext)=amj
+      rndnum=amj*fac
+!
+      return
+      end function rndnum
+!
+!
+!
+!
+!  end of random number function
+!
+! 
+!
+! #####################################################################
 
 
 END MODULE module_initialize_ideal
