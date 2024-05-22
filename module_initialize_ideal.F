@@ -1359,7 +1359,7 @@ MODULE module_initialize_ideal
                       nl_max, nl_in, u_jet, rho_jet, th_jet, z_jet,      &
                       nz_jet, ny_jet, j, .false.                          )
   ENDIF
-  DO I = its, min(ide-1,ite)
+  DO i = its, min(ide-1,ite)
 !  At this point grid%p_top is already set. find the DRY mass in the column
 !  by interpolating the DRY pressure.  
    pd_surf = interp_0( pd_in, zk, grid%phb(i,1,j)/g, nl_in )
@@ -1378,9 +1378,21 @@ MODULE module_initialize_ideal
       IF ( f_qnn .and. setccn ) THEN
        IF ( config_flags%mp_physics == wdm5scheme .or. config_flags%mp_physics == wdm6scheme ) THEN
          scalar(i,k,j,P_QNN) = grid%ccn_conc
-       ELSEIF ( config_flags%mp_physics == nssl_2momccn ) THEN
+       ELSEIF ( config_flags%mp_physics == nssl_2mom .and. config_flags%nssl_ccn_on > 0 ) THEN
 !       ELSEIF ( config_flags%mp_physics == nssl_2momccn .or. config_flags%mp_physics == nssl_3mom ) THEN
-         scalar(:,:,:,P_QNN) = grid%nssl_cccn/1.225
+         IF ( config_flags%nssl_ccn_is_ccna == 0 .or. config_flags%nssl_ccn_on == 2 ) THEN ! qnn field is for UNactivated CCN
+          ! The value of 1.225 converts number per m^3 to number per kg at sea level pressure in a perfectly mixed atmosphere
+           scalar(i,k,j,P_QNN) = grid%nssl_cccn/1.225
+!  Alternatively one can set CCN values as a function of k
+!   Values should be set as number per kilogram
+!          IF ( k < 7 ) THEN
+!          scalar(i,k,j,P_QNN) = grid%nssl_cccn/1.225
+!          ELSE
+!          scalar(i,k,j,P_QNN) = 0.1*grid%nssl_cccn/1.225
+!          ENDIF
+         ELSE ! qnn field is for Activated CCN (zero initial state)
+           scalar(i,k,j,P_QNN) = 0.0
+         ENDIF
        ELSE
          scalar(:,:,:,P_QNN) = grid%ccn_conc
        ENDIF
@@ -2428,7 +2440,19 @@ MODULE module_initialize_ideal
       do while (.not. end_of_file)
 
         read(10,*,end=100) h(k+1), th(k+1), qv(k+1), u(k+1), v(k+1)
+        IF ( use_snd_zlevels .and. k == 0 .and. h(k+1) > 0.0001 ) THEN
+          ! need to add a zero level.
+           h0 = 0.0
+           k = k+1
+           h(k+1) = h(k)
+           qv(k+1) = qv(k)
+           u(k+1) = u(k)
+           v(k+1) = v(k)
+        ENDIF
+
         k = k+1
+
+
         if(debug) write(6,'(1x,i3,5(1x,e10.3))') k, h(k), th(k), qv(k), u(k), v(k)
         
         go to 110

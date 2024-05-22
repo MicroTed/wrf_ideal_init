@@ -25,6 +25,7 @@ ugrid, vgrid : Set grid motion (default values of 0)
 use_eta_levels : If true, Sets vertical levels according to the eta_levels namelist item (default false; only for quarter_ss and squall2d)
 
 use_snd_zlevels : If true, uses the z levels of the input sounding (number of levels must match; only for quarter_ss and squall2d) 
+                  NOTE: The sounding must have a z=0 level. If not, the read subroutine will add one.
 
 use_snd_plevels : If true, uses the pressure levels of the input sounding (number of levels must match) (only for quarter_ss and squall2d)
 
@@ -53,5 +54,6 @@ centlat, centlon : set latitude, longitude (affects radiation, coriolis, if turn
 
 lm : sets half-width of land section for convrad (default = 0) and seabreeze2d_x (default = 25)
 
-
+setccn (logical, defaualt .false.) : Set true to use loop to set the qnn field to a given 
+           value or vertical profile (user-supplied code)
 
