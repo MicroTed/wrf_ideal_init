@@ -35,7 +35,10 @@ MODULE module_initialize_ideal
   real, private :: vgrid = 0.0        ! north-south grid motion (subtracted from V wind component)
   logical :: use_snd_plevels = .false. ! whether to read in pressure from the sounding file and use the same levels
   logical :: use_snd_zlevels = .false. ! whether to use Z levels the sounding file and create pressure
-
+  integer :: config_stretch_z = 0 ! 0 for 'equal spacing', 1 for geometric stretch
+  real    :: p_surface = 100000.
+  real    :: qv_surface = 14.
+  real    :: th_surface = 300.
  CONTAINS
 
 
@@ -97,8 +100,8 @@ MODULE module_initialize_ideal
 
    ! Local data
 
-   INTEGER, PARAMETER :: nl_max = 1000
-   REAL, DIMENSION(nl_max) :: zk, p_in, theta, rho, u, v, qv, pd_in, etal
+   INTEGER, PARAMETER :: nl_max = 3000
+   REAL, DIMENSION(nl_max) :: zk, p_in, theta, rho, u, v, qv, pd_in, etal, etaltmp,p_z
    REAL, DIMENSION(nl_max) :: alttde
    REAL    :: tmp_v_1, tmp_v_2, tmp_1, tmp_2
    INTEGER :: nl_in, icount
@@ -195,16 +198,27 @@ MODULE module_initialize_ideal
    integer :: bubbletype = 1 ! =2 to add random perts
    real, allocatable :: ranarray(:,:),ranarraysmth(:,:)
 !   real :: rndnum
-  integer           :: iranseed, i1, j1
-  double precision  :: dthtot, dthrantot, dthrantotv, dthran
-  double precision  :: dthrantotn, dthrantotp
-  double precision  :: dthrantotvn, dthrantotvp
+   integer           :: iranseed, i1, j1
+   double precision  :: dthtot, dthrantot, dthrantotv, dthran
+   double precision  :: dthrantotn, dthrantotp
+   double precision  :: dthrantotvn, dthrantotvp
+   real              :: dz_bot = 200., dz_top = 500., ztop = 20000.   ! dz_bot =grid spacing at z=0
+                                                                   ! dz_top = max stretch, 
+                                                                   ! ztop = config_flags%ztop
+   ! hard-wired values for second upper-level stretch (default off)
+   real    :: rtop       = 1.0     ! upper level stretch factor
+   real    :: ztopstr    = 100000. ! height to start upper level stretching; set < ztop to turn on
+   real    :: dzmaxtop   = 700.    ! max upper level dz
+   integer :: nbndlyr = 0
+   integer :: nz1
+   double precision, dimension(0:nl_max) :: gzc, gze
+   real              :: tmp1,tmp2,dz
 
    NAMELIST /init_ideal/ nxc,nyc,delt,use_eta_levels, &
         ugrid,vgrid,setccn,use_snd_plevels,use_snd_zlevels,numbub,nxb,nyb, &
         xradbub,yradbub,zradbub,moisten,mtn_ht,ido_terrain,centlat, centlon, lm, &
         lu_input, vegfra, canwat, isltyp, sst_input, bubbletype, ibbleseed, &
-        real_soil
+        real_soil,dz_bot, dz_top, nbndlyr, config_stretch_z
 
    SELECT CASE ( model_data_order )
          CASE ( DATA_ORDER_ZXY )
@@ -319,7 +333,7 @@ MODULE module_initialize_ideal
   CASE ( quarter_ss, squall2d_x, squall2d_y )
 
 !   stretch_grid = .true.
-   stretch_grid = .not. ( use_eta_levels .or. use_snd_plevels .or. use_snd_zlevels ) ! .true.
+   stretch_grid = .not. ( use_eta_levels .or. use_snd_plevels .or. use_snd_zlevels  ) ! .true.
    IF (delt == 0.0 ) THEN
      delt = 3.
    ENDIF
@@ -946,10 +960,61 @@ MODULE module_initialize_ideal
    ideal_levels: SELECT CASE ( model_config_rec%ideal_case )
    CASE(hill2d_x, quarter_ss, squall2d_x, squall2d_y, grav2d_x, b_wave)
    IF (stretch_grid) THEN ! exponential stretch for eta (nearly constant dz)
-     DO k=1, kde
-      grid%znw(k) = (exp(-(k-1)/float(kde-1)/z_scale) - exp(-1./z_scale))/ &
-                                (1.-exp(-1./z_scale))
+     IF ( config_stretch_z == 0 ) THEN
+      DO k=1, kde
+        grid%znw(k) = (exp(-(k-1)/float(kde-1)/z_scale) - exp(-1./z_scale))/ &
+                                 (1.-exp(-1./z_scale))
+       ENDDO
+     
+     ELSE ! geometric stretch
+
+          nz1 = kde
+          dz = ztop/float(nz1-1)
+          write(6,*) 'nz1,dz,ztop = ',nz1,dz,ztop,kde
+
+          CALL ZGRID_sub(dz, dz_bot, nz1, nbndlyr, gzc, gze, 1, dz_top,ztopstr,rtop,dzmaxtop)
+
+           DO k = 1,nz1
+             !write(6,*) 'k,gzc,gze = ',k,gzc(k),gze(k)
+             tmp1 = gzc(k)
+             tmp2 = gze(k)
+             write(6,*) ' k, gzc, gze = ', k, tmp1,tmp2
+           ENDDO
+
+         gze(0) = -gze(2)
+         ke = nz1
+         gze(ke+1) = gze(ke) + (gze(ke) - gze(ke-1))
+     
+       CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in, theta_surf)
+     
+     grid%znw(1) = 1.0
+     write(6,*) 'eta levels:'
+     write(6,*) 'k, eta'
+     write(6,*) 1,grid%znw(1)
+     DO k=2, kde-1
+      tmp1 = gze(k)
+      etaltmp(k) = interp_0( etal, zk, tmp1, nl_in )
+      p_z(k) = interp_0( p_in, zk, tmp1, nl_in )
+      write(6,*) 'k,z,etaltmp,zk,p: ',k,tmp1,etaltmp(k),zk(k),tmp2
      ENDDO
+
+     p_z(kde) = interp_0( p_in, zk, config_flags%ztop, nl_in )
+
+            etaltmp(1) = 1.
+            do k=2,kde
+              etaltmp(k) = (p_z(k) - p_z(kde))/(p_surface - p_z(kde))
+             write(6,*) 'k,z,new-etaltmp,p: ',k,gze(k),etaltmp(k),p_z(k)
+            enddo
+
+     DO k=2, kde
+      grid%znw(k) = etaltmp(k)
+     write(6,*) k,grid%znw(k)
+     ENDDO
+     !k = kde
+     !grid%znw(k) = etal(k+1) ! use the added top w-point for model top
+     ! write(6,*) k,grid%znw(k)
+     
+     ENDIF
    ELSE
 
     IF ( use_snd_plevels .or. use_snd_zlevels ) THEN
@@ -2002,6 +2067,18 @@ MODULE module_initialize_ideal
   end do
 ! ub<<
 
+  IF ( wrf_dm_on_monitor() ) THEN
+  open(unit=42,file='output_sounding',status='unknown')
+  write (42,*) p_surface/100.,th_surface,qv_surface
+  !write (6,'(A3,x,7A10)') 'k','z of eta','dz of eta','theta','qv','u'
+  !alttde(k+1) = alttde(k)
+  do k = kts, kte-1
+    write(42,'(7F10.3)') 0.5*(alttde(k)+alttde(Min(kte-1,k+1))), grid%t_1(its,k,jts)+t0,moist(its,k,jts,P_QV)*1000.0, &
+     grid%u_1(its,k,jts),grid%v_1(its,k,jts),grid%pb(its,k,jts)
+  end do
+  close(42)
+  ENDIF
+
 !  set a few more things
 
   DO J = jts, min(jde-1,jte)
@@ -2276,11 +2353,16 @@ MODULE module_initialize_ideal
 !  compute diagnostics,
 !  first, convert qv(g/kg) to qv(g/g)
 
+      IF ( qv_input(1) > 1. ) THEN
       do k=1,nl
         qv_input(k) = 0.001*qv_input(k)
       enddo
+      ENDIF
 
-      p_surf = 100.*p_surf  ! convert to pascals
+      IF ( p_surf < 3000. ) p_surf = 100.*p_surf  ! convert to pascals
+      p_surface = p_surf
+      qv_surface = qv_surf
+      th_surface = th_surf
       qvf = 1. + rvovrd*qv_input(1)
       rho_surf = 1./((r/p1000mb)*th_surf*qvf*((p_surf/p1000mb)**cvpm))
       pi_surf = (p_surf/p1000mb)**(r/cp)
@@ -2317,7 +2399,7 @@ MODULE module_initialize_ideal
             qvf1 = 0.5*(2.+(qv_input(k-1)+qv_input(k)))
             qvf = 1. + rvovrd*qv_input(k)   ! qv is in g/kg here
  
-            IF ( use_snd_plevels ) THEN ! using pressure levels from input sounding
+            IF ( use_snd_plevels .or. config_stretch_z /= 0 ) THEN ! using pressure levels from input sounding
               etal(k) = (pm_input(k) - pm_input(nl))/(pm_input(1) - pm_input(nl))
             ENDIF
  
@@ -2335,7 +2417,7 @@ MODULE module_initialize_ideal
             enddo
           enddo
 
-          IF ( use_snd_zlevels ) THEN
+          IF ( use_snd_zlevels .or. config_stretch_z /= 0 ) THEN
             etal(1) = 1.
             do k=2,nl
               etal(k) = (pm_input(k) - pm_input(nl))/(pm_input(1) - pm_input(nl))
@@ -2429,7 +2511,7 @@ MODULE module_initialize_ideal
 !        p(k+1) = p(k+1)*pfac
         k = k+1
         h(k) = h(k) - h0
-        if(debug) write(6,'(1x,i3,5(1x,e10.3))') k, h(k), th(k), qv(k), u(k), v(k), p(k)
+        if(debug) write(6,'(1x,i3,5(1x,e10.4))') k, h(k), th(k), qv(k), u(k), v(k), p(k)
         go to 210
  200    end_of_file = .true.
  210    continue
@@ -2443,9 +2525,11 @@ MODULE module_initialize_ideal
         IF ( use_snd_zlevels .and. k == 0 .and. h(k+1) > 0.0001 ) THEN
           ! need to add a zero level.
            h0 = 0.0
+           h(1) = 0.0
            k = k+1
            h(k+1) = h(k)
            qv(k+1) = qv(k)
+           th(k+1) = th(k)
            u(k+1) = u(k)
            v(k+1) = v(k)
         ENDIF
@@ -2909,5 +2993,143 @@ MODULE module_initialize_ideal
 !
 ! #####################################################################
 
+!-------------------------------------------------------------------------------
+!
+! >>>>>>>>>>>>>>>>>>>>>>>>>>>>   SUBROUTINE ZGRID  <<<<<<<<<<<<<<<<<<<<<<<<<<< !
+!
+!-------------------------------------------------------------------------------
+! Creates the vertical grid using a geometric stretch
+!
+! Option - set nbndlyr > 0 input deck.  A suggested value is ~ nz/4 to create a
+! layer having constant resolution near the surface.
+!
+!-------------------------------------------------------------------------------
+
+ SUBROUTINE ZGRID_sub(dz, dz_stretch, nz, nbndlyr, gzc, gze, ng, dzmax,ztopstr,rtop,dzmaxtop)
+
+   implicit none
+
+
+   real ::  dz, dz_stretch
+   real ::  dzmax,ztopstr,rtop,dzmaxtop
+   integer, intent(in) :: nbndlyr, nz, ng
+   double precision gzc(-ng+1:nz+ng), gze(-ng+1:nz+ng)
+
+!   real dzmax
+!   parameter( dzmax = 700. )
+   integer n, k
+   double precision stretch, zx, xmid, fmid, ztop
+   real :: ztop1,tmp1,tmp2
+
+!-----------------------------------------------------------------------------
+! MPI LOCAL VARIABLES
+
+! Use Newton interation to find grid coefficients
+
+   ztop    = dz * (nz-1)
+   zx      = 1.0d0
+   stretch = 1.0d0
+
+   IF( dz .gt. dz_stretch ) THEN
+
+    DO n = 1,50
+
+     IF( abs(zx) .gt. 1.0e-12 ) THEN
+      zx   = zx * 0.5
+      xmid = stretch + zx
+      fmid = ZHEIGHT(dz_stretch,xmid,nz-1,dzmax,nbndlyr,ztopstr,rtop,dzmaxtop) - ztop
+!      write(6,*) 'Stretch: ',n,zx,xmid,fmid,fmid + ztop
+      IF( fmid .le. 0.0 ) stretch = xmid
+      IF ( fmid .eq. 0.0d0 ) EXIT
+     ENDIF
+
+    ENDDO
+
+   ENDIF
+
+   write(6,*)
+   IF( stretch .gt. 1.1 ) THEN
+!    IF ( myid == 0 ) THEN
+!     write(message,*) ' error in input jet dimensions '
+!     CALL wrf_message (message)
+    write(0,*) 'STRETCH FAC TOO BIG! - NUMERICAL ERRORS WILL BE LARGE'
+    tmp1 = stretch
+    write(0,*) 'STRETCH FAC  =  ', stretch
+    write(0,*) 'INCREASE NZ in namelist or increase dz_bot'
+!    ENDIF
+    stop
+   ELSE
+!    IF ( myid == 0 ) THEN
+    tmp1 = stretch
+    write(6,*) 'STRETCH FAC  = ', stretch
+    ztop1 = ZHEIGHT(dz_stretch,stretch,nz-1,dzmax,nbndlyr,ztopstr,rtop,dzmaxtop)
+    write(6,*) 'ZGRID:  DOMAIN  HGT  = ', ztop1
+!    ENDIF
+   ENDIF
+
+   gze(1) = 0.0
+   DO k = 1,nz-1
+    gze(k+1) = ZHEIGHT(dz_stretch,stretch,k,dzmax,nbndlyr,ztopstr,rtop,dzmaxtop)
+    gzc(k)   = 0.5 * ( gze(k) + gze(k+1) )
+    write(6,*) 'ZGRID: gze,gzc = ',k,gze(k+1),gzc(k)
+   ENDDO
+
+   gzc(nz) = 2.*gzc(nz-1) - gzc(nz-2)
+
+
+  END SUBROUTINE ZGRID_sub
+
+!--------------------------------------------------------------------------
+! FUNCTION ZHEIGHT:  Computes the height of a geometrically stretched grid
+!                    with a few wrinkles:  It can have a layer of constant
+!                    dz at the bottom 'n1' layers thick, it also limits
+!                    the size of dz at the top of the model to be 'dzmax'.
+
+ REAL FUNCTION ZHEIGHT(dzbot,r,nz,dzmax,n1,zctop,ztopr,dzmax2)
+
+  implicit none
+  integer nz, n1, k, k2
+  integer n2
+  real dzbot
+  double precision r
+  double precision sum
+  double precision dznew, dzmaxdp, dzmax2dp
+  real dzmax
+  real zctop  ! height for upper level stretch
+  real ztopr  ! upper level stretch factor
+  real dzmax2 ! maximum upper dz
+  real dzm
+
+  sum = 0.0d0
+  dzmaxdp = dzmax
+  dzmax2dp = dzmax2
+
+!  zctop = 10000.
+!  ztopr = 1.09
+!  dzmax2 = 1000. ! 2*dzmax
+
+  n2 = 0
+
+  DO k = 1,nz
+
+   IF( k .le. n1 ) THEN
+    dznew=dzbot
+   ELSE
+    k2=k-n1
+    dznew = Min(dzbot * r**(k2-1),dzmaxdp)
+      IF ( sum .ge. zctop ) THEN
+       IF ( n2 .eq. 0 ) dzm = Min(dznew,dzmaxdp)
+       n2 = n2 + 1
+       dznew = Min(dzm * ztopr**n2, dzmax2)
+      ENDIF
+   ENDIF
+   sum = sum + dznew
+
+  ENDDO
+
+  ZHEIGHT = sum
+
+ RETURN
+ END FUNCTION ZHEIGHT
 
 END MODULE module_initialize_ideal
