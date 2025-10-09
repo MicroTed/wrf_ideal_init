@@ -205,11 +205,12 @@ MODULE module_initialize_ideal
    real              :: dz_bot = 200., dz_top = 500., ztop = 20000.   ! dz_bot =grid spacing at z=0
                                                                    ! dz_top = max stretch, 
                                                                    ! ztop = config_flags%ztop
+   integer :: nbndlyr = 0 ! number of layers with dz_bot before stretching starts
+
    ! hard-wired values for second upper-level stretch (default off)
    real    :: rtop       = 1.0     ! upper level stretch factor
    real    :: ztopstr    = 100000. ! height to start upper level stretching; set < ztop to turn on
    real    :: dzmaxtop   = 700.    ! max upper level dz
-   integer :: nbndlyr = 0
    integer :: nz1
    double precision, dimension(0:nl_max) :: gzc, gze
    real              :: tmp1,tmp2,dz
@@ -2072,8 +2073,12 @@ MODULE module_initialize_ideal
   write (42,*) p_surface/100.,th_surface,qv_surface
   !write (6,'(A3,x,7A10)') 'k','z of eta','dz of eta','theta','qv','u'
   !alttde(k+1) = alttde(k)
+   k = 1
+  ! add level at z=0
+  write(42,'(7(1x,F10.3))') 0.0,th_surface ,qv_surface, &
+     grid%u_1(its,k,jts),grid%v_1(its,k,jts),p_surface
   do k = kts, kte-1
-    write(42,'(7F10.3)') 0.5*(alttde(k)+alttde(Min(kte-1,k+1))), grid%t_1(its,k,jts)+t0,moist(its,k,jts,P_QV)*1000.0, &
+    write(42,'(7(1x,F10.3))') 0.5*(alttde(k)+alttde(Min(kte-1,k+1))), grid%t_1(its,k,jts)+t0,moist(its,k,jts,P_QV)*1000.0, &
      grid%u_1(its,k,jts),grid%v_1(its,k,jts),grid%pb(its,k,jts)
   end do
   close(42)
