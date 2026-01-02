@@ -5,7 +5,9 @@ WRFv3.9x:
 
 WRFv4:
   module_initialize_ideal.F 
-  
+  Vertical grid setting options (use_snd_zlevels or config_stretch_z) are currently only
+    applied to em_quarter and squall2d cases, but could be extended for convrad and
+    others.
 
 Namelist options (for WRFv4, notes indicate which specific ideal cases are applicable):
 
@@ -25,7 +27,16 @@ ugrid, vgrid : Set grid motion (default values of 0)
 use_eta_levels : If true, Sets vertical levels according to the eta_levels namelist item (default false; only for quarter_ss and squall2d)
 
 use_snd_zlevels : If true, uses the z levels of the input sounding (number of levels must match; only for quarter_ss and squall2d) 
-                  NOTE: The sounding must have a z=0 level. If not, the read subroutine will add one.
+                  The initialization assumes that heights in the soundings are AGL. 
+                  If the sounding has a value for z = 0, then set e_vert = nlvl. (where
+                  nlvl = number of sounding levels, including the z=0; i.e., has nlvl-1 
+                  values with z>0.)
+                  If the first sounding level instead has z > 0, then set e_vert = nlvl+1,
+                  and the subroutine will insert a z=0 level that uses the surface values 
+                  of theta and qv and first level values of U and V.
+                  (A z=0 level can also be inserted manually, if desired)
+                  NOTE: e_vert sets the number of W points, so the number of scalar levels
+                  is e_vert-1
 
 use_snd_plevels : If true, uses the pressure levels of the input sounding (number of levels must match) (only for quarter_ss and squall2d)
 

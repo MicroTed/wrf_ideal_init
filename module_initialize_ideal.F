@@ -2528,15 +2528,21 @@ MODULE module_initialize_ideal
 
         read(10,*,end=100) h(k+1), th(k+1), qv(k+1), u(k+1), v(k+1)
         IF ( use_snd_zlevels .and. k == 0 .and. h(k+1) > 0.0001 ) THEN
-          ! need to add a zero level.
+          ! need to add a zero level because first point is above ground
+          write(6,*) 'Adding a sounding level at z=0m'
            h0 = 0.0
-           h(1) = 0.0
-           k = k+1
+           ! h(1) = 0.0
+           k = k+1 ! k = 1 now, and k+1=2
+           ! copy first level to k=2, since code assumes first point (k=1) is at ground level
            h(k+1) = h(k)
            qv(k+1) = qv(k)
            th(k+1) = th(k)
            u(k+1) = u(k)
            v(k+1) = v(k)
+           ! now set k=1 values to surface values
+           h(k) = 0.0
+           th(k) = ts
+           qv(k) = qvs
         ENDIF
 
         k = k+1
