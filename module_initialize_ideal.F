@@ -177,6 +177,7 @@ MODULE module_initialize_ideal
    integer, parameter :: maxbub = 10
    integer :: numbub = 1
    integer :: nxb(maxbub) = -1 , nyb(maxbub) = -1
+   integer :: landseaopt = 1.0
 
    logical :: setccn = .false.
    
@@ -204,7 +205,7 @@ MODULE module_initialize_ideal
         ugrid,vgrid,setccn,use_snd_plevels,use_snd_zlevels,numbub,nxb,nyb, &
         xradbub,yradbub,zradbub,moisten,mtn_ht,ido_terrain,centlat, centlon, lm, &
         lu_input, vegfra, canwat, isltyp, sst_input, bubbletype, ibbleseed, &
-        real_soil
+        real_soil,landseaopt
 
    SELECT CASE ( model_data_order )
          CASE ( DATA_ORDER_ZXY )
@@ -526,6 +527,18 @@ MODULE module_initialize_ideal
          grid%lu_index(i,j)  = lu_input
          grid%tsk(i,j) = 280.0
          grid%tmn(i,j) = 280.0
+       ELSE
+         IF ( landseaopt == 1 ) THEN
+           grid%xland(i,j) = 1
+         ELSEIF ( landseaopt == 2 ) THEN
+           grid%xland(i,j) = 2
+         ELSEIF ( landseaopt == 3 ) THEN ! test code for part land, part sea
+           IF ( j < jde/2 ) THEN
+            grid%xland(i,j) = 1
+           ELSE
+            grid%xland(i,j) = 1
+           ENDIF
+         ENDIF
        ENDIF
 
       END DO
