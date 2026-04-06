@@ -114,6 +114,15 @@ MODULE module_initialize_ideal
    REAL    :: hm, xa
    REAL    :: pi, rnd
 
+      REAL:: naIN0 = 1.5E6
+      REAL:: naIN1 = 0.5E6
+      REAL:: naCCN0 = 300.0E6   ! about 2*qccn in BL
+      REAL:: naCCN1 = 50.0E6    ! qccn aloft
+      REAL:: naBC0 = 150.0E6
+      REAL:: naBC1 = 25.0E6
+      real :: niCCN3,h_01,niIN3
+      real :: hgt(nl_max)
+
 !  stuff from original initialization that has been dropped from the Registry
    REAL    :: vnu, xnu, xnus, dinit0, cbh, p0_temp, t0_temp, zd, zt
    REAL    :: qvf1, qvf2, pd_surf, theta_surf
@@ -219,7 +228,9 @@ MODULE module_initialize_ideal
         ugrid,vgrid,setccn,use_snd_plevels,use_snd_zlevels,numbub,nxb,nyb, &
         xradbub,yradbub,zradbub,moisten,mtn_ht,ido_terrain,centlat, centlon, lm, &
         lu_input, vegfra, canwat, isltyp, sst_input, bubbletype, ibbleseed, &
-        real_soil,dz_bot, dz_top, nbndlyr, config_stretch_z
+        real_soil,dz_bot, dz_top, nbndlyr, config_stretch_z,    &
+        naIN0,naIN1,naCCN0,naCCN1,naBC0,naBC1 
+
 
    SELECT CASE ( model_data_order )
          CASE ( DATA_ORDER_ZXY )
@@ -265,6 +276,7 @@ MODULE module_initialize_ideal
   rewind(15)
   read(15,NML=init_ideal,iostat=istat) ! returning iostat prevents bombing if the namelist does not exist
   close(15)
+  write(0,*) 'naCCN0 = ',naCCN0
 
    CALL model_to_grid_config_rec ( grid%id , model_config_rec , config_flags )
 
@@ -970,6 +982,7 @@ MODULE module_initialize_ideal
      ELSE ! geometric stretch
 
           nz1 = kde
+          ztop = config_flags%ztop
           dz = ztop/float(nz1-1)
           write(6,*) 'nz1,dz,ztop = ',nz1,dz,ztop,kde
 
@@ -1463,6 +1476,7 @@ MODULE module_initialize_ideal
          scalar(:,:,:,P_QNN) = grid%ccn_conc
        ENDIF
       ENDIF
+      
 
     enddo
 
@@ -1535,13 +1549,54 @@ MODULE module_initialize_ideal
   write(6,*) ' nxc, nyc for perturbation ',nxc,nyc
   write(6,*) ' delt for perturbation ',delt
 
+  IF ( F_QNWFA .and. setccn ) THEN
+    j = 1
+    i = 1
+      DO K = 1, kte-1
+      hgt(k) =  0.5*(grid%ph_1(i,k,j)+grid%ph_1(i,k+1,j)  &
+                   +grid%phb(i,k,j)+grid%phb(i,k+1,j))/g
+      ENDDO
+  ENDIF
+
   DO J = jts, min(jde-1,jte)
     yrad = config_flags%dy*float(j-nyc)/yradbub
 !   yrad = 0.
     DO I = its, min(ide-1,ite)
       xrad = config_flags%dx*float(i-nxc)/xradbub
 !     xrad = 0.
+
+      IF ( F_QNWFA .and. setccn ) THEN
+           IF ( naCCN0 > 0.0 ) THEN
+           if (hgt(1).le.1000.0) then
+               h_01 = 0.8
+            elseif (hgt(1).ge.2500.0) then
+               h_01 = 0.01
+            else
+               h_01 = 0.8*cos(hgt(1)*0.001 - 1.0)
+            endif
+            niCCN3 = -1.0*ALOG(naCCN1/naCCN0)/h_01
+            scalar(i,1,j,p_qnwfa) = naCCN1+naCCN0*exp(-((hgt(2)-hgt(1))/1000.)*niCCN3)
+            z1=hgt(2)-hgt(1)
+            grid%qnwfa2d(i,j) = scalar(i,1,j,p_qnwfa) * 0.000196 * (50./z1)
+            do k = 2, kte
+               scalar(i,k,j,p_qnwfa) = naCCN1+naCCN0*exp(-((hgt(k)-hgt(1))/1000.)*niCCN3)
+            enddo
+            ELSE
+              scalar(i,1:kte,j) = Abs(naCCN0)/1.225
+            ENDIF
+
+            niIN3 = -1.0*ALOG(naIN1/naIN0)/h_01
+            scalar(i,1,j,P_QNIFA) = naIN1+naIN0*exp(-((hgt(2)-hgt(1))/1000.)*niIN3)
+            do k = 2, kte
+               scalar(i,k,j,P_QNIFA) = naIN1+naIN0*exp(-((hgt(k)-hgt(1))/1000.)*niIN3)
+            enddo
+
+      ENDIF
+
       DO K = 1, kte-1
+
+
+      
 
 !  put in preturbation theta (bubble) and recalc density.  note,
 !  the mass in the column is not changing, so when theta changes,

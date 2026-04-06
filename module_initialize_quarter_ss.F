@@ -44,11 +44,16 @@ MODULE module_initialize_ideal
    USE module_dm
 #endif
 
+  private rndnum
 
   real, private :: ugrid = 0.0        ! east-west grid motion (subtracted from U wind component)
   real, private :: vgrid = 0.0        ! north-south grid motion (subtracted from V wind component)
   logical :: use_snd_plevels = .false. ! whether to read in pressure from the sounding file and use the same levels
   logical :: use_snd_zlevels = .false. ! whether to use Z levels the sounding file and create pressure
+  integer :: config_stretch_z = 0 ! 0 for 'equal spacing', 1 for geometric stretch
+  real    :: p_surface = 100000.
+  real    :: qv_surface = 14.
+  real    :: th_surface = 300.
 
 CONTAINS
 
@@ -112,7 +117,7 @@ CONTAINS
    ! Local data
 
    INTEGER, PARAMETER :: nl_max = 1000
-   REAL, DIMENSION(nl_max) :: zk, p_in, theta, rho, u, v, qv, pd_in, etal
+   REAL, DIMENSION(nl_max) :: zk, p_in, theta, rho, u, v, qv, pd_in, etal, etaltmp,p_z
    REAL, DIMENSION(nl_max) :: alttde
    REAL    :: tmp_v_1, tmp_v_2, tmp_1, tmp_2
    INTEGER :: nl_in , icount
@@ -139,11 +144,11 @@ CONTAINS
    REAL    :: z_scale, xrad, yrad, zrad, rad, cof1, cof2
 !   REAL, EXTERNAL :: interp_0
    REAL    :: hm
-   REAL    :: pi
+   REAL    :: pi, rnd
 
 !  stuff from original initialization that has been dropped from the Registry 
    REAL    :: vnu, xnu, xnus, dinit0, cbh, p0_temp, t0_temp, zd, zt
-   REAL    :: qvf1, qvf2, pd_surf
+   REAL    :: qvf1, qvf2, pd_surf, theta_surf
    INTEGER :: it
    real :: thtmp, ptmp, tem, temp(3)
 
@@ -163,6 +168,7 @@ CONTAINS
   INTEGER :: xs , xe , ys , ye
   REAL :: mtn_ht = 500.
   integer :: ido_terrain = 0 ! 1 = mountain, 2 = EW Ridge, 3 = NS Ridge
+   INTEGER :: ks, ke, id
    LOGICAL, EXTERNAL :: wrf_dm_on_monitor
    real :: lat = 35.0
    real :: lon = -95.0
@@ -173,10 +179,32 @@ CONTAINS
    LOGICAL :: real_soil = .false.
    logical :: fcoriolis = .false.
 
+   integer            :: ibbleseed = -1
+   integer :: bubbletype = 1 ! =2 to add random perts
+   real, allocatable :: ranarray(:,:),ranarraysmth(:,:)
+!   real :: rndnum
+   integer           :: iranseed, i1, j1
+   double precision  :: dthtot, dthrantot, dthrantotv, dthran
+   double precision  :: dthrantotn, dthrantotp
+   double precision  :: dthrantotvn, dthrantotvp
+   real              :: dz_bot = 200., dz_top = 500., ztop = 20000.   ! dz_bot =grid spacing at z=0
+                                                                   ! dz_top = max stretch, 
+                                                                   ! ztop = config_flags%ztop
+   integer :: nbndlyr = 0 ! number of layers with dz_bot before stretching starts
+
+   ! hard-wired values for second upper-level stretch (default off)
+   real    :: rtop       = 1.0     ! upper level stretch factor
+   real    :: ztopstr    = 100000. ! height to start upper level stretching; set < ztop to turn on
+   real    :: dzmaxtop   = 700.    ! max upper level dz
+   integer :: nz1
+   double precision, dimension(0:nl_max) :: gzc, gze
+   real              :: tmp1,tmp2,dz
+
    NAMELIST /init_ideal/ nxc,nyc,delt,use_eta_levels, &
         ugrid,vgrid,setccn,use_snd_plevels,use_snd_zlevels,numbub,nxb,nyb, &
         xradbub,yradbub,zradbub,moisten,mtn_ht,ido_terrain,lat,lon,  &
-        lu_index, vegfra, canwat, isltyp, real_soil, fcoriolis
+        lu_index, vegfra, canwat, isltyp, real_soil, fcoriolis, bubbletype, ibbleseed, &
+        dz_bot, dz_top, nbndlyr, config_stretch_z
 
    SELECT CASE ( model_data_order )
          CASE ( DATA_ORDER_ZXY )
@@ -266,6 +294,45 @@ CONTAINS
    ENDIF
 
    CALL model_to_grid_config_rec ( grid%id , model_config_rec , config_flags )
+
+!-----------------------------------------------------------------------------
+! TEMPERATURE perturbations
+
+    dthtot      = 0.0d0
+    dthrantot   = 0.0d0
+    dthrantotv  = 0.0d0
+    dthrantotn  = 0.0d0
+    dthrantotp  = 0.0d0
+    dthrantotvn = 0.0d0
+    dthrantotvp = 0.0d0
+   IF ( bubbletype > 1 ) THEN
+   !  write(0,*) 'allocate ranarray: ids:ide,jds:jde = ',ids,ide,jds,jde
+     allocate ( ranarray(ids:ide,jds:jde) )
+     allocate ( ranarraysmth(ids:ide,jds:jde) )
+
+    iranseed = -Abs(ibbleseed)
+!    dfac = 0.0
+    ranarray(:,:) = 0.0
+    ranarraysmth(:,:) = 0.0
+
+    DO j = jds,jde
+     DO i = ids,ide
+       ranarray(i,j) = 2.0*(rndnum(iranseed) - 0.5)  ! values of -1 to 1
+     ENDDO
+    ENDDO
+
+    DO j = jds,jde-4,4
+     DO i = ids,ide-4,4
+       DO  j1 = 0,4
+       DO  i1 = 0,4
+         ranarraysmth(i+i1,j+j1) = ranarray(i,j)
+       ENDDO
+       ENDDO
+     ENDDO
+    ENDDO
+     
+   ENDIF
+   
 
 ! here we check to see if the boundary conditions are set properly
 
@@ -433,15 +500,66 @@ CONTAINS
 ! set up the grid
 
    IF (stretch_grid) THEN ! exponential stretch for eta (nearly constant dz)
+     IF ( config_stretch_z == 0 ) THEN
      DO k=1, kde
       grid%znw(k) = (exp(-(k-1)/float(kde-1)/z_scale) - exp(-1./z_scale))/ &
                                 (1.-exp(-1./z_scale))
      ENDDO
+     ELSE ! geometric stretch
+
+          nz1 = kde
+          ztop = config_flags%ztop
+          dz = ztop/float(nz1-1)
+          write(6,*) 'nz1,dz,ztop = ',nz1,dz,ztop,kde
+
+          CALL ZGRID_sub(dz, dz_bot, nz1, nbndlyr, gzc, gze, 1, dz_top,ztopstr,rtop,dzmaxtop)
+
+           DO k = 1,nz1
+             !write(6,*) 'k,gzc,gze = ',k,gzc(k),gze(k)
+             tmp1 = gzc(k)
+             tmp2 = gze(k)
+             write(6,*) ' k, gzc, gze = ', k, tmp1,tmp2
+           ENDDO
+
+         gze(0) = -gze(2)
+         ke = nz1
+         gze(ke+1) = gze(ke) + (gze(ke) - gze(ke-1))
+     
+       CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in, theta_surf)
+     
+     grid%znw(1) = 1.0
+     write(6,*) 'eta levels:'
+     write(6,*) 'k, eta'
+     write(6,*) 1,grid%znw(1)
+     DO k=2, kde-1
+      tmp1 = gze(k)
+      etaltmp(k) = interp_0( etal, zk, tmp1, nl_in )
+      p_z(k) = interp_0( p_in, zk, tmp1, nl_in )
+      write(6,*) 'k,z,etaltmp,zk,p: ',k,tmp1,etaltmp(k),zk(k),tmp2
+     ENDDO
+
+     p_z(kde) = interp_0( p_in, zk, config_flags%ztop, nl_in )
+
+            etaltmp(1) = 1.
+            do k=2,kde
+              etaltmp(k) = (p_z(k) - p_z(kde))/(p_surface - p_z(kde))
+             write(6,*) 'k,z,new-etaltmp,p: ',k,gze(k),etaltmp(k),p_z(k)
+            enddo
+
+     DO k=2, kde
+      grid%znw(k) = etaltmp(k)
+     write(6,*) k,grid%znw(k)
+     ENDDO
+     !k = kde
+     !grid%znw(k) = etal(k+1) ! use the added top w-point for model top
+     ! write(6,*) k,grid%znw(k)
+     
+     ENDIF
    ELSE
 
     IF ( use_snd_plevels .or. use_snd_zlevels ) THEN
     dry_sounding = .false.
-    CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in )
+    CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in, theta_surf )
      grid%znw(1) = 1.0
      write(6,*) 'eta levels:'
      write(6,*) 'k, eta, delta-eta'
@@ -516,7 +634,7 @@ CONTAINS
   IF ( wrf_dm_on_monitor() ) THEN
   write(6,*) ' getting dry sounding for base state '
 
-  CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in )
+  CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in, theta_surf )
   ENDIF
   CALL wrf_dm_bcast_real( zk , nl_max )
   CALL wrf_dm_bcast_real( p_in , nl_max )
@@ -727,7 +845,7 @@ CONTAINS
 
   write(6,*) ' getting moist sounding for full state '
   dry_sounding = .false.
-  CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in )
+  CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in, theta_surf )
 
   DO J = jts, min(jde-1,jte)
   DO I = its, min(ide-1,ite)
@@ -851,6 +969,9 @@ CONTAINS
 !  we recompute density and geopotential
 
         
+         dthran = 0.0d0
+        IF( bubbletype .eq. 2 ) dthran = dthran + 0.1*ranarray(i,j)
+
         DO n = 1,numbub
          yrad = config_flags%dy*float(j-nyb(n))/yradbub
          xrad = config_flags%dx*float(i-nxb(n))/xradbub
@@ -861,7 +982,7 @@ CONTAINS
         RAD=SQRT(xrad*xrad+yrad*yrad+zrad*zrad)
         IF(RAD <= 1.) THEN
            thtmp   = grid%t_1(i,k,j) + t0
-           grid%t_1(i,k,j)=grid%t_1(i,k,j)+delt*COS(.5*PI*RAD)**2
+           grid%t_1(i,k,j)=grid%t_1(i,k,j)+delt*COS(.5*PI*RAD)**2 + dthran
            grid%t_2(i,k,j)=grid%t_1(i,k,j)
            qvf = 1. + rvovrd*moist(i,k,j,P_QV)
            grid%alt(i,k,j) = (r_d/p1000mb)*(grid%t_1(i,k,j)+t0)*qvf* &
@@ -1129,7 +1250,7 @@ CONTAINS
 !---------------------------------------------------------------------------
 
       subroutine get_sounding( zk, p, p_dry, theta, rho, &
-                               u, v, qv, etal, dry, nl_max, nl_in )
+                               u, v, qv, etal, dry, nl_max, nl_in, th_surf  )
       implicit none
 
       integer nl_max, nl_in
@@ -1425,6 +1546,243 @@ CONTAINS
       close(unit=11,status = 'keep')
 
       end subroutine read_soil
+
+! #####################################################################
+!
+!
+! #####################################################################
+!
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!
+!  STRAKAS ATMOSPHERIC MODEL  (SAM)
+!    Designed by Jerry M. Straka
+!
+!  RNDNUM(ISEED) (must define iseed=-1 on intialization 
+!                 in user routine)
+!
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+!2345678901234567890123456789012345678901234567890123456789012345678912
+!
+!  start function for random numbers....
+!
+      real function rndnum(iseed)
+!
+      implicit none
+!
+!      real rndnum
+!
+      integer :: iseed
+      real    ambig
+      parameter (ambig=4000000)
+      real    amseed
+      parameter (amseed=1618033)
+      real    amz,amj,amk
+      parameter (amz=0)
+!
+      real, save ::    ama(55)
+!
+      real       fac
+      parameter (fac=1./ambig)
+!
+      integer, save :: iff = 0, inext, inextp
+      integer :: n, nn, m
+!      save iff, inext, inextp, ama
+!
+!      data iff /0/
+!
+      if ( iseed .lt. 0 .or. iff .eq. 0 ) then
+      iff = 1
+      amj = amseed - abs(iseed)
+      amj = mod(amj,ambig)
+      ama(55) = amj
+      amk = 1
+      do n = 1,54
+      nn = mod(21*n,55)
+      ama(nn) = amk
+      amk = amj-amk
+      if (amk.lt.amz) amk=amk+ambig
+      amj=ama(nn)
+      end do
+!
+      do m = 1,4
+      do n = 1,55
+      ama(n)=ama(n)-ama(1+mod(n+30,55))
+      if (ama(n).lt.amz) ama(n)=ama(n)+ambig
+      end do
+      end do
+!
+      inext = 0
+      inextp = 31
+      iseed = 1
+!
+      end if
+!
+! find random number
+!
+      inext=inext+1
+      if (inext.eq.56) inext=1
+      inextp=inextp+1
+      if (inextp.eq.56) inextp=1
+      amj=ama(inext)-ama(inextp)
+      if (amj.lt.amz) amj=amj+ambig
+      ama(inext)=amj
+      rndnum=amj*fac
+!
+      return
+      end function rndnum
+!
+!
+!
+!
+!  end of random number function
+!
+! 
+!
+! #####################################################################
+
+!-------------------------------------------------------------------------------
+!
+! >>>>>>>>>>>>>>>>>>>>>>>>>>>>   SUBROUTINE ZGRID  <<<<<<<<<<<<<<<<<<<<<<<<<<< !
+!
+!-------------------------------------------------------------------------------
+! Creates the vertical grid using a geometric stretch
+!
+! Option - set nbndlyr > 0 input deck.  A suggested value is ~ nz/4 to create a
+! layer having constant resolution near the surface.
+!
+!-------------------------------------------------------------------------------
+
+ SUBROUTINE ZGRID_sub(dz, dz_stretch, nz, nbndlyr, gzc, gze, ng, dzmax,ztopstr,rtop,dzmaxtop)
+
+   implicit none
+
+
+   real ::  dz, dz_stretch
+   real ::  dzmax,ztopstr,rtop,dzmaxtop
+   integer, intent(in) :: nbndlyr, nz, ng
+   double precision gzc(-ng+1:nz+ng), gze(-ng+1:nz+ng)
+
+!   real dzmax
+!   parameter( dzmax = 700. )
+   integer n, k
+   double precision stretch, zx, xmid, fmid, ztop
+   real :: ztop1,tmp1,tmp2
+
+!-----------------------------------------------------------------------------
+! MPI LOCAL VARIABLES
+
+! Use Newton interation to find grid coefficients
+
+   ztop    = dz * (nz-1)
+   zx      = 1.0d0
+   stretch = 1.0d0
+
+   IF( dz .gt. dz_stretch ) THEN
+
+    DO n = 1,50
+
+     IF( abs(zx) .gt. 1.0e-12 ) THEN
+      zx   = zx * 0.5
+      xmid = stretch + zx
+      fmid = ZHEIGHT(dz_stretch,xmid,nz-1,dzmax,nbndlyr,ztopstr,rtop,dzmaxtop) - ztop
+!      write(6,*) 'Stretch: ',n,zx,xmid,fmid,fmid + ztop
+      IF( fmid .le. 0.0 ) stretch = xmid
+      IF ( fmid .eq. 0.0d0 ) EXIT
+     ENDIF
+
+    ENDDO
+
+   ENDIF
+
+   write(6,*)
+   IF( stretch .gt. 1.1 ) THEN
+!    IF ( myid == 0 ) THEN
+!     write(message,*) ' error in input jet dimensions '
+!     CALL wrf_message (message)
+    write(0,*) 'STRETCH FAC TOO BIG! - NUMERICAL ERRORS WILL BE LARGE'
+    tmp1 = stretch
+    write(0,*) 'STRETCH FAC  =  ', stretch
+    write(0,*) 'INCREASE NZ in namelist or increase dz_bot'
+!    ENDIF
+    stop
+   ELSE
+!    IF ( myid == 0 ) THEN
+    tmp1 = stretch
+    write(6,*) 'STRETCH FAC  = ', stretch
+    ztop1 = ZHEIGHT(dz_stretch,stretch,nz-1,dzmax,nbndlyr,ztopstr,rtop,dzmaxtop)
+    write(6,*) 'ZGRID:  DOMAIN  HGT  = ', ztop1
+!    ENDIF
+   ENDIF
+
+   gze(1) = 0.0
+   DO k = 1,nz-1
+    gze(k+1) = ZHEIGHT(dz_stretch,stretch,k,dzmax,nbndlyr,ztopstr,rtop,dzmaxtop)
+    gzc(k)   = 0.5 * ( gze(k) + gze(k+1) )
+    write(6,*) 'ZGRID: gze,gzc = ',k,gze(k+1),gzc(k)
+   ENDDO
+
+   gzc(nz) = 2.*gzc(nz-1) - gzc(nz-2)
+
+
+  END SUBROUTINE ZGRID_sub
+
+!--------------------------------------------------------------------------
+! FUNCTION ZHEIGHT:  Computes the height of a geometrically stretched grid
+!                    with a few wrinkles:  It can have a layer of constant
+!                    dz at the bottom 'n1' layers thick, it also limits
+!                    the size of dz at the top of the model to be 'dzmax'.
+
+ REAL FUNCTION ZHEIGHT(dzbot,r,nz,dzmax,n1,zctop,ztopr,dzmax2)
+
+  implicit none
+  integer nz, n1, k, k2
+  integer n2
+  real dzbot
+  double precision r
+  double precision sum
+  double precision dznew, dzmaxdp, dzmax2dp
+  real dzmax
+  real zctop  ! height for upper level stretch
+  real ztopr  ! upper level stretch factor
+  real dzmax2 ! maximum upper dz
+  real dzm
+
+  sum = 0.0d0
+  dzmaxdp = dzmax
+  dzmax2dp = dzmax2
+
+!  zctop = 10000.
+!  ztopr = 1.09
+!  dzmax2 = 1000. ! 2*dzmax
+
+  n2 = 0
+
+  DO k = 1,nz
+
+   IF( k .le. n1 ) THEN
+    dznew=dzbot
+   ELSE
+    k2=k-n1
+    dznew = Min(dzbot * r**(k2-1),dzmaxdp)
+      IF ( sum .ge. zctop ) THEN
+       IF ( n2 .eq. 0 ) dzm = Min(dznew,dzmaxdp)
+       n2 = n2 + 1
+       dznew = Min(dzm * ztopr**n2, dzmax2)
+      ENDIF
+   ENDIF
+   sum = sum + dznew
+
+  ENDDO
+
+  ZHEIGHT = sum
+
+ RETURN
+ END FUNCTION ZHEIGHT
 
 
 END MODULE module_initialize_ideal
