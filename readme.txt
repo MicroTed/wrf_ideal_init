@@ -5,7 +5,9 @@ WRFv3.9x:
 
 WRFv4:
   module_initialize_ideal.F 
-  
+  Vertical grid setting options (use_snd_zlevels or config_stretch_z) are currently only
+    applied to em_quarter and squall2d cases, but could be extended for convrad and
+    others.
 
 Namelist options (for WRFv4, notes indicate which specific ideal cases are applicable):
 
@@ -13,7 +15,7 @@ Namelist options (for WRFv4, notes indicate which specific ideal cases are appli
         ugrid,vgrid,setccn,use_snd_plevels,use_snd_zlevels,numbub,nxb,nyb, &
         xradbub,yradbub,zradbub,moisten,mtn_ht,ido_terrain,centlat, centlon, lm, &
         lu_input, vegfra, canwat, isltyp, sst_input, &
-        real_soil
+        real_soil,dz_bot, dz_top, nbndlyr, config_stretch_z
 
 nxc,nyc : For single bubble, sets x,y location (in gridpoints). Default location is
       nxc = (ide-ids)/3 + 1
@@ -25,9 +27,25 @@ ugrid, vgrid : Set grid motion (default values of 0)
 use_eta_levels : If true, Sets vertical levels according to the eta_levels namelist item (default false; only for quarter_ss and squall2d)
 
 use_snd_zlevels : If true, uses the z levels of the input sounding (number of levels must match; only for quarter_ss and squall2d) 
-                  NOTE: The sounding must have a z=0 level. If not, the read subroutine will add one.
+                  The initialization assumes that heights in the soundings are AGL. 
+                  If the sounding has a value for z = 0, then set e_vert = nlvl. (where
+                  nlvl = number of sounding levels, including the z=0; i.e., has nlvl-1 
+                  values with z>0.)
+                  If the first sounding level instead has z > 0, then set e_vert = nlvl+1,
+                  and the subroutine will insert a z=0 level that uses the surface values 
+                  of theta and qv and first level values of U and V.
+                  (A z=0 level can also be inserted manually, if desired)
+                  NOTE: e_vert sets the number of W points, so the number of scalar levels
+                  is e_vert-1
 
 use_snd_plevels : If true, uses the pressure levels of the input sounding (number of levels must match) (only for quarter_ss and squall2d)
+
+config_stretch_z = 0 ! (WRF4 only) 0 for 'equal spacing' (wrf default), 1 for geometric stretch using the following parameters:
+    ! interpolates input sounding to the internally-generated z levels (close to them, anyway) 
+    dz_bot = 200. ! grid spacing at z=0 
+    dz_top = 500., ! = max stretched dz
+    nbndlyr = 0 ! number of layers with dz_bot before stretching starts
+    ! note that ztop = config_flags%ztop
 
 numbub : number of thermal bubbles (default 1, up to maxbub=10) (only for quarter_ss)
 
