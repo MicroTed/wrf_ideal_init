@@ -1594,7 +1594,7 @@ MODULE module_initialize_ideal
                scalar(i,k,j,p_qnwfa) = naCCN1+naCCN0*exp(-((hgt(k)-hgt(1))/1000.)*niCCN3)
             enddo
             ELSE
-              scalar(i,1:kte,j) = Abs(naCCN0)/1.225
+              scalar(i,1:kte,j,p_qnwfa) = Abs(naCCN0)/1.225
             ENDIF
 
             niIN3 = -1.0*ALOG(naIN1/naIN0)/h_01
