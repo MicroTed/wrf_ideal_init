@@ -479,6 +479,8 @@ MODULE module_initialize_ideal
 
     IF ( model_config_rec%sf_surface_physics(grid%id) == 0 ) THEN
     
+    mminlu2 = ' '
+    CALL nl_set_mminlu(1, mminlu2)
     CALL nl_set_mminlu(1,'    ')
     CALL nl_set_iswater(1,0)
     CALL nl_set_cen_lat(1,centlat)
@@ -1010,7 +1012,8 @@ MODULE module_initialize_ideal
          gze(0) = -gze(2)
          ke = nz1
          gze(ke+1) = gze(ke) + (gze(ke) - gze(ke-1))
-     
+       dry_sounding = .true.
+       etal(:) = 0.0
        CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in, theta_surf)
      
      grid%znw(1) = 1.0
@@ -1044,6 +1047,7 @@ MODULE module_initialize_ideal
    ELSE
 
     IF ( use_snd_plevels .or. use_snd_zlevels ) THEN
+    dry_sounding = .true.
     CALL get_sounding( zk, p_in, pd_in, theta, rho, u, v, qv, etal, dry_sounding, nl_max, nl_in, theta_surf)
      grid%znw(1) = 1.0
      write(6,*) 'eta levels:'
@@ -1208,6 +1212,7 @@ MODULE module_initialize_ideal
   CALL wrf_dm_bcast_real( u , nl_max )
   CALL wrf_dm_bcast_real( v , nl_max )
   CALL wrf_dm_bcast_real( qv , nl_max )
+  CALL wrf_dm_bcast_real( etal , nl_max )
   CALL wrf_dm_bcast_integer ( nl_in , 1 )
 
   write(6,*) ' returned from reading sounding, nl_in is ',nl_in
